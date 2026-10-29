@@ -1,12 +1,15 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Search,
   Plus,
   Pencil,
   Trash2,
   Boxes,
+  PackageCheck,
+  AlertTriangle,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
@@ -22,12 +25,24 @@ import { TableSkeleton } from '@/components/ui/Skeleton';
 import ItemForm from './ItemForm';
 import { toast } from 'sonner';
 
-export default function InventoryTable() {
+export default function InventoryTable({ initialStats }) {
+  const router = useRouter();
   const [items, setItems] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 15, totalPages: 1 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+
+  // Reactive Stats state (initialized with server stats, updated dynamically from API)
+  const [stats, setStats] = useState(
+    initialStats || { totalItems: 0, totalStock: 0, lowStock: 0, outOfStock: 0 }
+  );
+
+  useEffect(() => {
+    if (initialStats) {
+      setStats(initialStats);
+    }
+  }, [initialStats]);
 
   // Modal states
   const [formOpen, setFormOpen] = useState(false);
@@ -54,6 +69,9 @@ export default function InventoryTable() {
       if (data.success) {
         setItems(data.items || []);
         setPagination(data.pagination || { total: 0, page: 1, limit: 15, totalPages: 1 });
+        if (data.stats) {
+          setStats(data.stats);
+        }
       } else {
         toast.error(data.error || 'Failed to load inventory items');
       }
@@ -99,7 +117,11 @@ export default function InventoryTable() {
         toast.success(data.message || `Item ${itemToDelete.ItemID} deleted successfully`);
         setDeleteOpen(false);
         setItemToDelete(null);
-        fetchItems(pagination.page);
+
+        // Adjust target page if the only item on the current page was removed
+        const targetPage = items.length === 1 && pagination.page > 1 ? pagination.page - 1 : pagination.page;
+        fetchItems(targetPage);
+        router.refresh();
       } else {
         toast.error(data.error || 'Failed to delete item', {
           duration: 6000,
@@ -113,7 +135,60 @@ export default function InventoryTable() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {/* Dynamic Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+            <Boxes className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Total Products
+            </p>
+            <h3 className="text-xl font-bold text-slate-900 mt-0.5">{stats.totalItems}</h3>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+            <PackageCheck className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Total Stock Units
+            </p>
+            <h3 className="text-xl font-bold text-slate-900 mt-0.5">
+              {Number(stats.totalStock).toFixed(2)}
+            </h3>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Low Stock Items
+            </p>
+            <h3 className="text-xl font-bold text-amber-600 mt-0.5">{stats.lowStock}</h3>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Out of Stock
+            </p>
+            <h3 className="text-xl font-bold text-red-600 mt-0.5">{stats.outOfStock}</h3>
+          </div>
+        </div>
+      </div>
+
       {/* Search and Action Toolbar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         <div className="flex flex-1 flex-col sm:flex-row gap-3">
@@ -338,6 +413,7 @@ export default function InventoryTable() {
           onSuccess={() => {
             setFormOpen(false);
             fetchItems(pagination.page);
+            router.refresh();
           }}
           onCancel={() => setFormOpen(false)}
         />
@@ -363,4 +439,3 @@ export default function InventoryTable() {
     </div>
   );
 }
-

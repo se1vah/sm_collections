@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const itemSchema = z.object({
-  ItemID: z.coerce.number().int().positive({ message: 'Item ID must be a positive integer' }),
+  ItemID: z.coerce.number().int().positive({ message: 'Item ID must be a positive integer' }).max(Number.MAX_SAFE_INTEGER, { message: 'Item ID is too large' }),
   ItemName: z.string().trim().min(1, { message: 'Item Name is required' }).max(150, { message: 'Item Name cannot exceed 150 characters' }),
   Category: z.string().trim().max(100, { message: 'Category cannot exceed 100 characters' }).nullable().optional().default(''),
   Unit: z.enum(['Qty', 'Meter'], { errorMap: () => ({ message: "Unit must be either 'Qty' or 'Meter'" }) }),
@@ -30,11 +30,19 @@ export const invoiceItemInputSchema = z.object({
 
 export const invoiceCreateSchema = z.object({
   InvoiceDate: z.string().optional(),
+  Discount: z.coerce.number().min(0, { message: 'Discount cannot be negative' }).default(0.00),
+  PaymentMethod: z.enum(['Cash', 'UPI', 'Card']).default('Cash'),
+  sub_total: z.coerce.number().min(0).optional(),
+  total_amount: z.coerce.number().min(0).optional(),
   items: z.array(invoiceItemInputSchema).min(1, { message: 'At least one item is required in the invoice' }),
 });
 
 export const invoiceUpdateSchema = z.object({
   InvoiceDate: z.string().optional(),
+  Discount: z.coerce.number().min(0, { message: 'Discount cannot be negative' }).default(0.00),
+  PaymentMethod: z.enum(['Cash', 'UPI', 'Card']).default('Cash'),
+  sub_total: z.coerce.number().min(0).optional(),
+  total_amount: z.coerce.number().min(0).optional(),
   items: z.array(invoiceItemInputSchema).min(1, { message: 'At least one item is required in the invoice' }),
 });
 
@@ -50,4 +58,3 @@ export const singleInvoiceItemUpdateSchema = z.object({
   Quantity: z.coerce.number().positive({ message: 'Quantity must be greater than 0' }).optional(),
   Price: z.coerce.number().min(0, { message: 'Price cannot be negative' }).optional(),
 });
-

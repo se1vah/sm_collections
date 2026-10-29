@@ -1,5 +1,19 @@
 import { query } from './db.js';
 
+export async function getInventoryStats() {
+  const totalItemsRows = await query('SELECT COUNT(*) AS total FROM Items');
+  const totalStockRows = await query('SELECT COALESCE(SUM(StockQuantity), 0) AS totalStock FROM Items');
+  const lowStockRows = await query('SELECT COUNT(*) AS lowStock FROM Items WHERE StockQuantity > 0 AND StockQuantity <= 10');
+  const outOfStockRows = await query('SELECT COUNT(*) AS outOfStock FROM Items WHERE StockQuantity <= 0');
+
+  return {
+    totalItems: Number(totalItemsRows[0]?.total || 0),
+    totalStock: Number(totalStockRows[0]?.totalStock || 0),
+    lowStock: Number(lowStockRows[0]?.lowStock || 0),
+    outOfStock: Number(outOfStockRows[0]?.outOfStock || 0),
+  };
+}
+
 export async function getItems({ search = '', category = '', page = 1, limit = 50 } = {}) {
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
@@ -44,8 +58,12 @@ export async function getItems({ search = '', category = '', page = 1, limit = 5
   
   const items = await query(dataSql, [...params, limitNum, offset]);
 
+  // Include overall inventory stats so client cards always stay 100% in sync
+  const stats = await getInventoryStats();
+
   return {
     items,
+    stats,
     pagination: {
       total,
       page: pageNum,
@@ -83,7 +101,6 @@ export async function getNextSuggestedItemId() {
 export async function createItem(data) {
   const numericId = Number(data.ItemID);
 
-  // Check if ItemID already exists
   const existing = await getItemById(numericId);
   if (existing) {
     const err = new Error(`Item ID #${numericId} is already in use by "${existing.ItemName}". Please choose a different unique Item ID.`);
@@ -151,7 +168,6 @@ export async function deleteItem(id) {
     throw err;
   }
 
-  // Check if item is referenced in Invoice_Items
   const refSql = `SELECT COUNT(*) AS invoiceCount FROM Invoice_Items WHERE ItemID = ?`;
   const refRows = await query(refSql, [numericId]);
   const invoiceCount = refRows[0]?.invoiceCount || 0;

@@ -8,23 +8,27 @@ import {
   Pencil,
   Trash2,
   FileDown,
+  Printer,
   Receipt,
   RefreshCw,
   X,
+  CreditCard,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import InvoiceForm from './InvoiceForm';
+import ThermalReceiptModal from './ThermalReceiptModal';
 import { toast } from 'sonner';
 
 export default function InvoiceTable() {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters: Search by Invoice ID & Date picker filter
+  // Filters
   const [searchId, setSearchId] = useState('');
   const [filterDate, setFilterDate] = useState('');
 
@@ -32,6 +36,10 @@ export default function InvoiceTable() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState(null);
   const [fetchingInvoiceDetail, setFetchingInvoiceDetail] = useState(false);
+
+  // Thermal print modal
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [invoiceToPrint, setInvoiceToPrint] = useState(null);
 
   // Delete modal
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -94,6 +102,21 @@ export default function InvoiceTable() {
     }
   };
 
+  const handleOpenPrint = async (invoice) => {
+    try {
+      const res = await fetch(`/api/invoices/${invoice.InvoiceID}`);
+      const data = await res.json();
+      if (data.success && data.data) {
+        setInvoiceToPrint(data.data);
+        setPrintModalOpen(true);
+      } else {
+        toast.error('Failed to load invoice receipt details');
+      }
+    } catch (err) {
+      toast.error('Error opening thermal receipt');
+    }
+  };
+
   const handleDeleteClick = (invoice) => {
     setInvoiceToDelete(invoice);
     setDeleteOpen(true);
@@ -129,13 +152,25 @@ export default function InvoiceTable() {
     window.open(`/api/invoices/${invoiceId}/pdf`, '_blank');
   };
 
-  // Format date helper: DD-MM-YYYY
   const formatInvoiceDate = (dateVal) => {
     if (!dateVal) return '-';
     const d = new Date(dateVal);
     if (isNaN(d.getTime())) return String(dateVal);
     const pad = (n) => String(n).padStart(2, '0');
     return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+  };
+
+  const getPaymentBadgeVariant = (method) => {
+    switch (method) {
+      case 'Cash':
+        return 'success';
+      case 'UPI':
+        return 'primary';
+      case 'Card':
+        return 'purple';
+      default:
+        return 'default';
+    }
   };
 
   return (
@@ -206,7 +241,7 @@ export default function InvoiceTable() {
       {/* Invoices Table Card */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
         {loading && invoices.length === 0 ? (
-          <TableSkeleton rows={5} cols={5} />
+          <TableSkeleton rows={5} cols={7} />
         ) : invoices.length === 0 ? (
           <EmptyState
             icon={Receipt}
@@ -226,8 +261,11 @@ export default function InvoiceTable() {
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                   <th className="py-3 px-4">Invoice ID</th>
                   <th className="py-3 px-4">Invoice Date</th>
+                  <th className="py-3 px-4 text-center">Payment</th>
                   <th className="py-3 px-4 text-center">Items</th>
-                  <th className="py-3 px-4 text-right">Grand Total</th>
+                  <th className="py-3 px-4 text-right">Subtotal</th>
+                  <th className="py-3 px-4 text-right">Discount</th>
+                  <th className="py-3 px-4 text-right">Total Amount</th>
                   <th className="py-3 px-4 text-center">Actions</th>
                 </tr>
               </thead>
@@ -242,30 +280,54 @@ export default function InvoiceTable() {
                       #{inv.InvoiceID}
                     </td>
 
-                    {/* Invoice Date formatted as DD-MM-YYYY */}
+                    {/* Invoice Date */}
                     <td className="py-3.5 px-4 font-medium text-slate-700">
                       {formatInvoiceDate(inv.InvoiceDate)}
                     </td>
 
-                    {/* Total Items count badge */}
+                    {/* Payment Method Badge */}
+                    <td className="py-3.5 px-4 text-center">
+                      <Badge variant={getPaymentBadgeVariant(inv.PaymentMethod)}>
+                        {inv.PaymentMethod || 'Cash'}
+                      </Badge>
+                    </td>
+
+                    {/* Items count */}
                     <td className="py-3.5 px-4 text-center text-xs text-slate-600">
                       <span className="bg-slate-100 px-2.5 py-1 rounded-md font-semibold">
                         {inv.totalItems} item{inv.totalItems === 1 ? '' : 's'}
                       </span>
                     </td>
 
-                    {/* Grand Total */}
-                    <td className="py-3.5 px-4 text-right font-bold text-slate-900">
-                      ₹ {Number(inv.grandTotal).toFixed(2)}
+                    {/* Subtotal */}
+                    <td className="py-3.5 px-4 text-right font-medium text-slate-600">
+                      ₹ {Number(inv.sub_total || 0).toFixed(2)}
                     </td>
 
-                    {/* Actions: Download PDF, Edit, Delete */}
+                    {/* Discount */}
+                    <td className="py-3.5 px-4 text-right font-medium text-amber-700">
+                      {Number(inv.Discount || 0) > 0 ? `- ₹ ${Number(inv.Discount).toFixed(2)}` : '₹ 0.00'}
+                    </td>
+
+                    {/* Total Amount */}
+                    <td className="py-3.5 px-4 text-right font-bold text-slate-900">
+                      ₹ {Number(inv.total_amount || 0).toFixed(2)}
+                    </td>
+
+                    {/* Actions: Thermal Print, Download PDF, Edit, Delete */}
                     <td className="py-3.5 px-4">
-                      <div className="flex items-center justify-center gap-1.5">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleOpenPrint(inv)}
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Print Thermal Receipt"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => handleDownloadPDF(inv.InvoiceID)}
                           className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                          title="Download PDF"
+                          title="Download Receipt PDF"
                         >
                           <FileDown className="w-4 h-4" />
                         </button>
@@ -301,7 +363,7 @@ export default function InvoiceTable() {
         title={editingInvoice ? `Edit Invoice #${editingInvoice.InvoiceID}` : 'Create New Invoice'}
         description={
           editingInvoice
-            ? 'Update invoice date, quantities, or prices. Inventory will adjust automatically.'
+            ? 'Update invoice date, items, discount, or payment method. Inventory adjusts automatically.'
             : 'Enter an Item ID and press Enter to quickly add items to the invoice.'
         }
         maxWidth="max-w-4xl"
@@ -314,6 +376,16 @@ export default function InvoiceTable() {
           onCancel={() => setFormOpen(false)}
         />
       </Dialog>
+
+      {/* Thermal Receipt Preview Modal */}
+      <ThermalReceiptModal
+        isOpen={printModalOpen}
+        onClose={() => {
+          setPrintModalOpen(false);
+          setInvoiceToPrint(null);
+        }}
+        invoice={invoiceToPrint}
+      />
 
       {/* Delete Invoice Confirmation Dialog */}
       <ConfirmDialog
@@ -335,4 +407,3 @@ export default function InvoiceTable() {
     </div>
   );
 }
-

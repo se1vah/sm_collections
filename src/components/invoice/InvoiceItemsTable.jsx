@@ -20,13 +20,6 @@ export default function InvoiceItemsTable({
     );
   }
 
-  const totalItems = items.length;
-  const totalQuantity = items.reduce((sum, item) => sum + Number(item.Quantity || 0), 0);
-  const grandTotal = items.reduce(
-    (sum, item) => sum + Number(item.Quantity || 0) * Number(item.Price || 0),
-    0
-  );
-
   return (
     <div className="space-y-4">
       {/* Table Container */}
@@ -168,28 +161,6 @@ export default function InvoiceItemsTable({
           </table>
         </div>
       </div>
-
-      {/* Summary Box */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 bg-slate-50 border border-slate-200 rounded-xl gap-4">
-        <div className="flex items-center gap-6 text-sm">
-          <div>
-            <span className="text-slate-500 font-medium">Total Items: </span>
-            <span className="font-bold text-slate-800">{totalItems}</span>
-          </div>
-          <div>
-            <span className="text-slate-500 font-medium">Total Quantity: </span>
-            <span className="font-bold text-slate-800">{totalQuantity.toFixed(2)}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-slate-600">Grand Total:</span>
-          <span className="text-xl font-extrabold text-blue-700 bg-white px-3.5 py-1.5 rounded-xl border border-blue-200 shadow-2xs">
-            ₹ {grandTotal.toFixed(2)}
-          </span>
-        </div>
-      </div>
     </div>
   );
 }
-

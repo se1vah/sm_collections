@@ -22,18 +22,34 @@ export async function GET(request, { params }) {
     // Determine font paths
     const regularFontPath = path.join(process.cwd(), 'src', 'assets', 'fonts', 'segoeui.ttf');
     const boldFontPath = path.join(process.cwd(), 'src', 'assets', 'fonts', 'segoeuib.ttf');
-
     const hasCustomFont = fs.existsSync(regularFontPath) && fs.existsSync(boldFontPath);
 
-    // Create PDF Document with custom font directly in constructor to bypass Helvetica.afm requirement
+    // 80mm standard thermal roll width = 80mm * (72 / 25.4) = ~226.77 pt
+    const receiptWidth = 226;
+    const marginLeft = 10;
+    const marginRight = 10;
+    const contentWidth = receiptWidth - marginLeft - marginRight; // 206 pt
+
+    // Calculate dynamic receipt height based on content
+    const itemsCount = invoice.items.length;
+    // Base height: Header (~70) + Meta (~65) + TableHeader (~16) + Totals (~55) + Footer (~50) + Margins (~30)
+    let calculatedHeight = 295 + (itemsCount * 16);
+    // Add extra padding for wrapped long item names
+    for (const item of invoice.items) {
+      if (item.ItemName && item.ItemName.length > 18) {
+        calculatedHeight += 12;
+      }
+    }
+    const receiptHeight = Math.max(320, calculatedHeight);
+
     const docOptions = {
-      size: 'A4',
-      margin: 40,
+      size: [receiptWidth, receiptHeight],
+      margins: { top: 12, bottom: 12, left: marginLeft, right: marginRight },
       bufferPages: true,
       info: {
-        Title: `Invoice_${invoice.InvoiceID}`,
+        Title: `Receipt_${invoice.InvoiceID}`,
         Author: 'SM Collections',
-        Subject: `Invoice #${invoice.InvoiceID}`,
+        Subject: `Thermal Receipt #${invoice.InvoiceID}`,
       },
     };
 
@@ -44,13 +60,12 @@ export async function GET(request, { params }) {
     const doc = new PDFDocument(docOptions);
 
     if (hasCustomFont) {
-      doc.registerFont('AppRegular', regularFontPath);
-      doc.registerFont('AppBold', boldFontPath);
+      doc.registerFont('ReceiptRegular', regularFontPath);
+      doc.registerFont('ReceiptBold', boldFontPath);
     }
 
-    const regularFont = hasCustomFont ? 'AppRegular' : 'Helvetica';
-    const boldFont = hasCustomFont ? 'AppBold' : 'Helvetica-Bold';
-    const rupeePrefix = hasCustomFont ? '₹ ' : 'Rs. ';
+    const fontRegular = hasCustomFont ? 'ReceiptRegular' : 'Helvetica';
+    const fontBold = hasCustomFont ? 'ReceiptBold' : 'Helvetica-Bold';
 
     const chunks = [];
     doc.on('data', (chunk) => chunks.push(chunk));
@@ -60,143 +75,172 @@ export async function GET(request, { params }) {
       doc.on('error', reject);
     });
 
-    // Formatting date
+    // Parse date and time
     const invDate = new Date(invoice.InvoiceDate);
-    const formattedDate = !isNaN(invDate.getTime())
-      ? invDate.toLocaleDateString('en-IN', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true,
-        })
-      : String(invoice.InvoiceDate);
-
-    // --- Header ---
-    doc.rect(40, 40, 515, 4).fill('#2563eb');
-
-    doc.font(boldFont).fontSize(22).fillColor('#1e3a8a').text('SM COLLECTIONS', 40, 55);
-    doc.font(regularFont).fontSize(9).fillColor('#64748b').text('Premium Quality Fabrics & Materials', 40, 80);
-    doc.text('Invoice & Inventory Management System', 40, 93);
-
-    doc.font(boldFont).fontSize(20).fillColor('#2563eb').text('TAX INVOICE', 350, 55, { align: 'right' });
+    const isValidDate = !isNaN(invDate.getTime());
+    const pad = (n) => String(n).padStart(2, '0');
     
-    // Invoice Meta Box
-    doc.rect(365, 80, 190, 45).fillAndStroke('#f8fafc', '#e2e8f0');
-    doc.font(boldFont).fontSize(10).fillColor('#0f172a').text('Invoice ID:', 375, 88);
-    doc.font(boldFont).fontSize(10).fillColor('#2563eb').text(`#${invoice.InvoiceID}`, 450, 88);
+    // DD-MM-YYYY format matching sample receipt
+    const dateStr = isValidDate
+      ? `${pad(invDate.getDate())}-${pad(invDate.getMonth() + 1)}-${invDate.getFullYear()}`
+      : String(invoice.InvoiceDate).split(' ')[0] || '';
 
-    doc.font(regularFont).fontSize(9).fillColor('#475569').text('Invoice Date:', 375, 105);
-    doc.text(formattedDate, 445, 105);
+    // 12-hour hh:mm am/pm matching sample receipt
+    let timeStr = '';
+    if (isValidDate) {
+      let hours = invDate.getHours();
+      const minutes = pad(invDate.getMinutes());
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      hours = hours % 12;
+      hours = hours ? hours : 12; // '0' becomes '12'
+      timeStr = `${pad(hours)}:${minutes} ${ampm}`;
+    }
+
+    // Bill Number set directly to Invoice ID
+    const formattedBillNo = invoice.InvoiceID;
+    const paymentMethodDisplay = String(invoice.PaymentMethod || 'Cash').toUpperCase();
+
+    // Helper to draw dashed divider matching thermal receipt
+    function drawDashedLine(y) {
+      doc
+        .save()
+        .strokeColor('#111827')
+        .lineWidth(0.6)
+        .dash(2.5, { space: 2 })
+        .moveTo(marginLeft, y)
+        .lineTo(receiptWidth - marginRight, y)
+        .stroke()
+        .undash()
+        .restore();
+    }
+
+    let y = 14;
+
+    // --- 1. STORE HEADER (Centered) ---
+    doc.font(fontBold).fontSize(11).fillColor('#000000');
+    doc.text("SM COLLECTION'S", marginLeft, y, { width: contentWidth, align: 'center' });
+    y += 14;
+
+    doc.font(fontRegular).fontSize(7.5);
+    doc.text('Smart Shopping, Better Living', marginLeft, y, { width: contentWidth, align: 'center' });
+    y += 10;
+    doc.text('Lakshmana Theertham,', marginLeft, y, { width: contentWidth, align: 'center' });
+    y += 10;
+    doc.text('Rameswaram', marginLeft, y, { width: contentWidth, align: 'center' });
+    y += 10;
+    doc.text('Ph: 9629967006', marginLeft, y, { width: contentWidth, align: 'center' });
+    y += 14;
 
     // Divider
-    doc.strokeColor('#cbd5e1').lineWidth(0.75).moveTo(40, 135).lineTo(555, 135).stroke();
+    drawDashedLine(y);
+    y += 8;
 
-    // --- Table Headers ---
-    let yPos = 150;
-    const colX = {
-      sno: 40,
-      id: 70,
-      name: 120,
-      qty: 310,
-      unit: 370,
-      price: 430,
-      total: 495,
-    };
-    const colWidth = {
-      sno: 25,
-      id: 45,
-      name: 180,
-      qty: 55,
-      unit: 50,
-      price: 60,
-      total: 60,
-    };
+    // --- 2. INVOICE DETAILS (Left aligned) ---
+    doc.font(fontBold).fontSize(8).fillColor('#000000');
+    doc.text('TAX INVOICE', marginLeft, y);
+    y += 11;
 
-    function drawTableHeader(y) {
-      doc.rect(40, y, 515, 22).fill('#1e40af');
-      doc.font(boldFont).fontSize(9).fillColor('#ffffff');
-      doc.text('S.No', colX.sno + 3, y + 6);
-      doc.text('Item ID', colX.id + 3, y + 6);
-      doc.text('Item Name', colX.name, y + 6);
-      doc.text('Quantity', colX.qty, y + 6, { width: colWidth.qty, align: 'right' });
-      doc.text('Unit', colX.unit, y + 6, { width: colWidth.unit, align: 'center' });
-      doc.text('Price', colX.price, y + 6, { width: colWidth.price, align: 'right' });
-      doc.text('Total', colX.total, y + 6, { width: colWidth.total, align: 'right' });
+    doc.font(fontRegular).fontSize(8);
+    doc.text(`Bill No : ${formattedBillNo}`, marginLeft, y);
+    y += 11;
+
+    doc.text(`Date    : ${dateStr}`, marginLeft, y);
+    y += 11;
+
+    if (timeStr) {
+      doc.text(`Time    : ${timeStr}`, marginLeft, y);
+      y += 11;
     }
 
-    drawTableHeader(yPos);
-    yPos += 24;
+    doc.text(`Payment method : ${paymentMethodDisplay}`, marginLeft, y);
+    y += 13;
 
-    // --- Table Body ---
-    let sNo = 1;
-    for (const item of invoice.items) {
-      // Check page overflow
-      if (yPos > 700) {
-        doc.addPage();
-        yPos = 50;
-        drawTableHeader(yPos);
-        yPos += 24;
-      }
+    // Divider
+    drawDashedLine(y);
+    y += 8;
 
-      const rowBg = sNo % 2 === 0 ? '#f8fafc' : '#ffffff';
-      doc.rect(40, yPos - 2, 515, 22).fill(rowBg);
+    // --- 3. ITEMS TABLE HEADER ---
+    // Columns: ITEM (left), QTY (right), RATE (right), AMT (right)
+    const colItem = marginLeft;
+    const colQty = marginLeft + 95;
+    const colRate = marginLeft + 125;
+    const colAmt = marginLeft + 160;
 
-      doc.font(regularFont).fontSize(9).fillColor('#334155');
-      doc.text(String(sNo), colX.sno + 3, yPos + 4);
-      doc.text(String(item.ItemID), colX.id + 3, yPos + 4);
-      doc.font(boldFont).text(item.ItemName, colX.name, yPos + 4, { width: colWidth.name, ellipsis: true });
-      doc.font(regularFont);
-      doc.text(Number(item.Quantity).toFixed(2), colX.qty, yPos + 4, { width: colWidth.qty, align: 'right' });
-      doc.text(item.Unit || 'Qty', colX.unit, yPos + 4, { width: colWidth.unit, align: 'center' });
-      doc.text(`${rupeePrefix}${Number(item.Price).toFixed(2)}`, colX.price, yPos + 4, { width: colWidth.price, align: 'right' });
-      doc.font(boldFont).fillColor('#0f172a');
-      doc.text(`${rupeePrefix}${Number(item.Total).toFixed(2)}`, colX.total, yPos + 4, { width: colWidth.total, align: 'right' });
+    const widthItem = 90;
+    const widthQty = 25;
+    const widthRate = 33;
+    const widthAmt = 46;
 
-      // Line under row
-      doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(40, yPos + 20).lineTo(555, yPos + 20).stroke();
+    doc.font(fontBold).fontSize(7.5).fillColor('#000000');
+    doc.text('ITEM', colItem, y, { width: widthItem });
+    doc.text('QTY', colQty, y, { width: widthQty, align: 'right' });
+    doc.text('RATE', colRate, y, { width: widthRate, align: 'right' });
+    doc.text('AMT', colAmt, y, { width: widthAmt, align: 'right' });
+    y += 12;
 
-      yPos += 22;
-      sNo++;
+    // --- 4. ITEM ROWS ---
+    doc.font(fontRegular).fontSize(7.5).fillColor('#000000');
+    for (const itm of invoice.items) {
+      const itmTotal = Number(itm.Quantity || 0) * Number(itm.Price || 0);
+      const qtyStr = Number(itm.Quantity) % 1 === 0 ? String(parseInt(itm.Quantity, 10)) : Number(itm.Quantity).toFixed(2);
+      const rateStr = Number(itm.Price) % 1 === 0 ? String(parseInt(itm.Price, 10)) : Number(itm.Price).toFixed(2);
+      const amtStr = itmTotal.toFixed(2);
+
+      const startY = y;
+
+      // Print Item Name (can wrap if long)
+      doc.text(itm.ItemName, colItem, startY, { width: widthItem });
+      const nameHeight = doc.heightOfString(itm.ItemName, { width: widthItem });
+
+      // Print numbers aligned with top of item row
+      doc.text(qtyStr, colQty, startY, { width: widthQty, align: 'right' });
+      doc.text(rateStr, colRate, startY, { width: widthRate, align: 'right' });
+      doc.text(amtStr, colAmt, startY, { width: widthAmt, align: 'right' });
+
+      y += Math.max(13, nameHeight + 2);
     }
 
-    // Space before summary
-    yPos += 15;
-    if (yPos > 680) {
-      doc.addPage();
-      yPos = 50;
-    }
+    y += 3;
+    drawDashedLine(y);
+    y += 8;
 
-    // --- Summary Section ---
-    const summaryX = 330;
-    const summaryWidth = 225;
+    // --- 5. SUBTOTAL & DISCOUNT ---
+    const subTotalVal = Number(invoice.sub_total || invoice.summary.subTotal || 0).toFixed(2);
+    const discountVal = Number(invoice.Discount || invoice.summary.discount || 0).toFixed(2);
+    const totalAmountVal = Number(invoice.total_amount || invoice.summary.totalAmount || 0).toFixed(2);
 
-    doc.rect(summaryX, yPos, summaryWidth, 80).fillAndStroke('#f1f5f9', '#cbd5e1');
+    doc.font(fontRegular).fontSize(8).fillColor('#000000');
+    doc.text('Subtotal', marginLeft, y);
+    doc.text(subTotalVal, colAmt - 10, y, { width: widthAmt + 10, align: 'right' });
+    y += 12;
 
-    doc.font(regularFont).fontSize(9.5).fillColor('#475569');
-    doc.text('Total Items:', summaryX + 15, yPos + 12);
-    doc.font(boldFont).fillColor('#0f172a').text(String(invoice.summary.totalItems), summaryX + 130, yPos + 12, { width: 80, align: 'right' });
+    doc.text('Discount', marginLeft, y);
+    doc.text(discountVal, colAmt - 10, y, { width: widthAmt + 10, align: 'right' });
+    y += 14;
 
-    doc.font(regularFont).fillColor('#475569').text('Total Quantity:', summaryX + 15, yPos + 30);
-    doc.font(boldFont).fillColor('#0f172a').text(Number(invoice.summary.totalQuantity).toFixed(2), summaryX + 130, yPos + 30, { width: 80, align: 'right' });
+    // Divider
+    drawDashedLine(y);
+    y += 8;
 
-    // Grand total highlight
-    doc.rect(summaryX + 5, yPos + 48, summaryWidth - 10, 26).fill('#2563eb');
-    doc.font(boldFont).fontSize(11).fillColor('#ffffff');
-    doc.text('Grand Total:', summaryX + 15, yPos + 55);
-    doc.text(`${rupeePrefix}${Number(invoice.summary.grandTotal).toFixed(2)}`, summaryX + 100, yPos + 55, { width: 110, align: 'right' });
+    // --- 6. TOTAL AMOUNT (Bold / Prominent) ---
+    doc.font(fontBold).fontSize(10.5).fillColor('#000000');
+    doc.text('TOTAL AMOUNT', marginLeft, y);
+    doc.text(totalAmountVal, colAmt - 20, y, { width: widthAmt + 20, align: 'right' });
+    y += 16;
 
-    // --- Footer ---
-    const pages = doc.bufferedPageRange();
-    for (let i = 0; i < pages.count; i++) {
-      doc.switchToPage(i);
+    // Divider
+    drawDashedLine(y);
+    y += 10;
 
-      doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(40, 785).lineTo(555, 785).stroke();
-      doc.font(regularFont).fontSize(8).fillColor('#94a3b8');
-      doc.text('This is a computer-generated invoice. Thank you for your business!', 40, 795);
-      doc.text(`Page ${i + 1} of ${pages.count}`, 350, 795, { align: 'right' });
-    }
+    // --- 7. FOOTER (Centered) ---
+    doc.font(fontRegular).fontSize(8).fillColor('#000000');
+    doc.text('Thank You!', marginLeft, y, { width: contentWidth, align: 'center' });
+    y += 11;
+    doc.text('Visit Again', marginLeft, y, { width: contentWidth, align: 'center' });
+    y += 14;
+
+    doc.font(fontRegular).fontSize(7).fillColor('#000000');
+    doc.text('NO RETURNS  |  NO EXCHANGES', marginLeft, y, { width: contentWidth, align: 'center' });
 
     doc.end();
 
@@ -206,14 +250,14 @@ export async function GET(request, { params }) {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="Invoice_${invoice.InvoiceID}.pdf"`,
+        'Content-Disposition': `inline; filename="Receipt_${invoice.InvoiceID}.pdf"`,
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
     });
   } catch (error) {
-    console.error('PDF generation error:', error);
+    console.error('Thermal Receipt PDF generation error:', error);
     return NextResponse.json(
-      { success: false, error: error.message || 'Failed to generate PDF' },
+      { success: false, error: error.message || 'Failed to generate thermal receipt' },
       { status: 500 }
     );
   }

@@ -1,6 +1,6 @@
 import InvoiceTable from '@/components/invoice/InvoiceTable';
 import { Receipt, IndianRupee, TrendingUp } from 'lucide-react';
-import { query } from '@/lib/db';
+import { query } from '@/lib/db.js';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,7 +8,7 @@ async function getInvoiceStats() {
   try {
     const totalInvoicesRows = await query('SELECT COUNT(*) AS total FROM Invoices');
     const revenueRows = await query(
-      'SELECT COALESCE(SUM(Quantity * Price), 0) AS totalRevenue FROM Invoice_Items'
+      'SELECT COALESCE(SUM(total_amount), 0) AS totalRevenue FROM Invoices'
     );
     const totalInvoices = totalInvoicesRows[0]?.total || 0;
     const totalRevenue = Number(revenueRows[0]?.totalRevenue || 0);
@@ -37,7 +37,7 @@ export default async function InvoicePage() {
             Invoice Management
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Create, manage, and download GST tax invoices with real-time stock synchronization.
+            Create, manage, and print 80mm thermal receipts with discount, payment methods, and live stock tracking.
           </p>
         </div>
       </div>
@@ -90,4 +90,3 @@ export default async function InvoicePage() {
     </div>
   );
 }
-

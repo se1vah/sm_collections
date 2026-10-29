@@ -4,13 +4,22 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import InvoiceItemsTable from './InvoiceItemsTable';
-import { Download, Save, Search, ArrowRight, CornerDownLeft, AlertCircle } from 'lucide-react';
+import ThermalReceiptModal from './ThermalReceiptModal';
+import {
+  Download,
+  Save,
+  Search,
+  CornerDownLeft,
+  Printer,
+  CreditCard,
+  IndianRupee,
+  Percent,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
   const isEdit = Boolean(invoice && invoice.InvoiceID);
 
-  // Default date to current local datetime format YYYY-MM-DDTHH:mm
   const getCurrentDateTime = () => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -18,12 +27,18 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
   };
 
   const [invoiceDate, setInvoiceDate] = useState(getCurrentDateTime());
+  const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [discount, setDiscount] = useState('0.00');
   const [items, setItems] = useState([]);
   const [itemIdInput, setItemIdInput] = useState('');
   const [searchingItem, setSearchingItem] = useState(false);
   const [lastFoundItem, setLastFoundItem] = useState(null);
   const [loading, setLoading] = useState(false);
   const [savedInvoiceId, setSavedInvoiceId] = useState(null);
+  const [savedInvoiceData, setSavedInvoiceData] = useState(null);
+
+  // Print thermal modal state
+  const [printModalOpen, setPrintModalOpen] = useState(false);
 
   const itemIdInputRef = useRef(null);
 
@@ -38,8 +53,12 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
           );
         }
       }
+      setPaymentMethod(invoice.PaymentMethod || 'Cash');
+      setDiscount(
+        invoice.Discount !== undefined ? Number(invoice.Discount).toFixed(2) : '0.00'
+      );
+
       if (invoice.items && Array.isArray(invoice.items)) {
-        // In edit mode, effective available stock = current stock + previously invoiced quantity
         setItems(
           invoice.items.map((itm) => ({
             ...itm,
@@ -53,8 +72,20 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
         );
       }
       setSavedInvoiceId(invoice.InvoiceID);
+      setSavedInvoiceData(invoice);
     }
   }, [invoice]);
+
+  // Dynamic Calculations
+  const totalItems = items.length;
+  const totalQuantity = items.reduce((sum, item) => sum + Number(item.Quantity || 0), 0);
+  const subTotal = Number(
+    items.reduce((sum, item) => sum + Number(item.Quantity || 0) * Number(item.Price || 0), 0).toFixed(2)
+  );
+
+  const discountNum = Math.max(0, parseFloat(discount) || 0);
+  const isDiscountExceeding = discountNum > subTotal;
+  const totalAmount = Math.max(0, subTotal - discountNum);
 
   // Search and add item using Item ID
   const handleAddItemById = async (e) => {
@@ -79,13 +110,10 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
       const item = data.data;
       setLastFoundItem(item);
 
-      // Check if item is already added to invoice
       const existingIdx = items.findIndex((i) => Number(i.ItemID) === targetId);
-
       const maxStock = Number(item.StockQuantity);
 
       if (existingIdx !== -1) {
-        // Item already in invoice: increment quantity
         const existingItem = items[existingIdx];
         const step = item.Unit === 'Meter' ? 0.25 : 1;
         const effectiveMax = isEdit ? existingItem.AvailableStock : maxStock;
@@ -106,7 +134,6 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
         setItems(updatedItems);
         toast.success(`Increased "${item.ItemName}" quantity to ${newQty} ${item.Unit}`);
       } else {
-        // Item not in invoice: check if stock is available
         if (maxStock <= 0) {
           toast.error(`"${item.ItemName}" is out of stock (Available: 0 ${item.Unit}).`);
           return;
@@ -126,7 +153,6 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
         toast.success(`Added "${item.ItemName}" to invoice`);
       }
 
-      // Clear input and refocus
       setItemIdInput('');
       if (itemIdInputRef.current) {
         itemIdInputRef.current.focus();
@@ -163,7 +189,18 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
       return;
     }
 
-    // Validate quantities and prices
+    if (discountNum < 0) {
+      toast.error('Discount cannot be negative.');
+      return;
+    }
+
+    if (discountNum > subTotal) {
+      toast.error(
+        `Discount (₹${discountNum.toFixed(2)}) cannot exceed Subtotal (₹${subTotal.toFixed(2)}).`
+      );
+      return;
+    }
+
     for (const item of items) {
       if (!item.Quantity || Number(item.Quantity) <= 0) {
         toast.error(`Invalid quantity for item "${item.ItemName}". Must be greater than 0.`);
@@ -185,6 +222,10 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
     try {
       const payload = {
         InvoiceDate: invoiceDate ? new Date(invoiceDate).toISOString() : new Date().toISOString(),
+        Discount: discountNum,
+        PaymentMethod: paymentMethod,
+        sub_total: subTotal,
+        total_amount: Number(totalAmount.toFixed(2)),
         items: items.map((itm) => ({
           InvoiceItemID: itm.InvoiceItemID,
           ItemID: Number(itm.ItemID),
@@ -210,8 +251,27 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
 
       const generatedId = isEdit ? invoice.InvoiceID : data.InvoiceID;
       setSavedInvoiceId(generatedId);
+
+      const savedData = {
+        InvoiceID: generatedId,
+        InvoiceDate: invoiceDate,
+        PaymentMethod: paymentMethod,
+        Discount: discountNum,
+        sub_total: subTotal,
+        total_amount: Number(totalAmount.toFixed(2)),
+        items: items,
+        summary: {
+          subTotal,
+          discount: discountNum,
+          totalAmount: Number(totalAmount.toFixed(2)),
+        },
+      };
+      setSavedInvoiceData(savedData);
+
       toast.success(
-        isEdit ? `Invoice #${generatedId} updated successfully` : `Invoice #${generatedId} created successfully`
+        isEdit
+          ? `Invoice #${generatedId} updated successfully`
+          : `Invoice #${generatedId} created successfully`
       );
 
       if (onSuccess) {
@@ -227,16 +287,41 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
   const handleDownloadPDF = (idToDownload) => {
     const targetId = idToDownload || savedInvoiceId || (invoice && invoice.InvoiceID);
     if (!targetId) {
-      toast.error('Save the invoice first to generate PDF');
+      toast.error('Save the invoice first to download receipt');
       return;
     }
     window.open(`/api/invoices/${targetId}/pdf`, '_blank');
   };
 
+  const handleOpenPrintModal = () => {
+    if (!savedInvoiceData && !savedInvoiceId) {
+      toast.error('Please save the invoice first to print the receipt.');
+      return;
+    }
+
+    const currentInvoiceData = savedInvoiceData || {
+      InvoiceID: savedInvoiceId || invoice.InvoiceID,
+      InvoiceDate: invoiceDate,
+      PaymentMethod: paymentMethod,
+      Discount: discountNum,
+      sub_total: subTotal,
+      total_amount: Number(totalAmount.toFixed(2)),
+      items: items,
+      summary: {
+        subTotal,
+        discount: discountNum,
+        totalAmount: Number(totalAmount.toFixed(2)),
+      },
+    };
+    setSavedInvoiceData(currentInvoiceData);
+    setPrintModalOpen(true);
+  };
+
   return (
     <div className="space-y-6">
-      {/* Top Invoice Metadata Section */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+      {/* Top Invoice Metadata Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+        {/* Invoice ID */}
         <div>
           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
             Invoice ID
@@ -248,12 +333,13 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
               <span className="text-emerald-700 font-mono">#{savedInvoiceId} (Saved)</span>
             ) : (
               <span className="text-slate-500 italic font-normal text-sm">
-                Generated Automatically upon Save
+                Generated Automatically
               </span>
             )}
           </div>
         </div>
 
+        {/* Invoice Date & Time */}
         <div>
           <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
             Invoice Date & Time <span className="text-red-500">*</span>
@@ -264,6 +350,22 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
             onChange={(e) => setInvoiceDate(e.target.value)}
             className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:border-blue-500"
           />
+        </div>
+
+        {/* Payment Method */}
+        <div>
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 mb-1">
+            Payment Method <span className="text-red-500">*</span>
+          </label>
+          <select
+            value={paymentMethod}
+            onChange={(e) => setPaymentMethod(e.target.value)}
+            className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:border-blue-500 font-medium"
+          >
+            <option value="Cash">Cash</option>
+            <option value="UPI">UPI (GPay / PhonePe / QR)</option>
+            <option value="Card">Card (Debit / Credit)</option>
+          </select>
         </div>
       </div>
 
@@ -296,7 +398,6 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
           </Button>
         </form>
 
-        {/* Real-time hint for last found item */}
         {lastFoundItem && (
           <div className="text-xs text-blue-800 bg-white/80 p-2.5 rounded-lg border border-blue-100 flex items-center justify-between">
             <div>
@@ -318,18 +419,99 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
         onRemoveItem={handleRemoveItem}
       />
 
+      {/* Financial Summary & Calculation Controls */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          {/* Quick Metrics */}
+          <div className="flex items-center gap-6 text-sm text-slate-600">
+            <div>
+              <span className="text-slate-500 font-medium">Total Items: </span>
+              <span className="font-bold text-slate-900">{totalItems}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 font-medium">Total Quantity: </span>
+              <span className="font-bold text-slate-900">{totalQuantity.toFixed(2)}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 font-medium">Payment: </span>
+              <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                {paymentMethod}
+              </span>
+            </div>
+          </div>
+
+          {/* Calculations Box */}
+          <div className="w-full md:w-80 space-y-2.5 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+            {/* Subtotal */}
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-slate-600 font-medium">Subtotal:</span>
+              <span className="font-bold text-slate-900">₹ {subTotal.toFixed(2)}</span>
+            </div>
+
+            {/* Discount Input */}
+            <div className="flex justify-between items-center text-sm gap-2">
+              <label className="text-slate-600 font-medium flex items-center gap-1 shrink-0">
+                <Percent className="w-3.5 h-3.5 text-slate-400" />
+                Discount (₹):
+              </label>
+              <div className="relative w-32">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max={subTotal}
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  className={`w-full text-right font-bold text-sm bg-slate-50 border rounded-lg py-1 px-2.5 focus:outline-hidden focus:bg-white ${
+                    isDiscountExceeding
+                      ? 'border-red-400 text-red-600 focus:border-red-500'
+                      : 'border-slate-300 text-slate-900 focus:border-blue-500'
+                  }`}
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            {isDiscountExceeding && (
+              <p className="text-[11px] text-red-600 text-right font-medium">
+                Discount cannot exceed Subtotal (₹{subTotal.toFixed(2)})
+              </p>
+            )}
+
+            {/* Divider */}
+            <div className="border-t border-slate-200 pt-2 flex justify-between items-center">
+              <span className="text-sm font-bold text-slate-800">Total Amount:</span>
+              <span className="text-xl font-extrabold text-blue-700">
+                ₹ {totalAmount.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Action Footer */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200">
-        <div>
-          {savedInvoiceId && (
-            <Button
-              variant="outline"
-              onClick={() => handleDownloadPDF(savedInvoiceId)}
-              className="text-blue-700 border-blue-300 hover:bg-blue-50"
-            >
-              <Download className="w-4 h-4" />
-              Download PDF (Invoice #{savedInvoiceId})
-            </Button>
+        <div className="flex items-center gap-2">
+          {(savedInvoiceId || isEdit) && (
+            <>
+              <Button
+                variant="outline"
+                onClick={handleOpenPrintModal}
+                className="text-slate-700 border-slate-300 hover:bg-slate-100 gap-1.5"
+              >
+                <Printer className="w-4 h-4 text-slate-600" />
+                Print Receipt
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => handleDownloadPDF(savedInvoiceId)}
+                className="text-blue-700 border-blue-300 hover:bg-blue-50 gap-1.5"
+              >
+                <Download className="w-4 h-4 text-blue-600" />
+                Download PDF
+              </Button>
+            </>
           )}
         </div>
 
@@ -337,13 +519,24 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
           <Button variant="outline" onClick={onCancel} disabled={loading}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={loading} className="gap-2">
+          <Button
+            onClick={handleSubmit}
+            loading={loading}
+            disabled={isDiscountExceeding}
+            className="gap-2"
+          >
             <Save className="w-4 h-4" />
             {isEdit ? 'Update Invoice' : 'Save Invoice'}
           </Button>
         </div>
       </div>
+
+      {/* Thermal Receipt Preview Modal */}
+      <ThermalReceiptModal
+        isOpen={printModalOpen}
+        onClose={() => setPrintModalOpen(false)}
+        invoice={savedInvoiceData}
+      />
     </div>
   );
 }
-

@@ -46,31 +46,55 @@ export async function getAllInvoices({ search = '', date = '', startDate = '', e
     SELECT 
       inv.InvoiceID,
       inv.InvoiceDate,
+      CAST(inv.sub_total AS DOUBLE) AS sub_total,
+      CAST(inv.Discount AS DOUBLE) AS Discount,
+      CAST(inv.total_amount AS DOUBLE) AS total_amount,
+      inv.PaymentMethod,
       COUNT(ii.InvoiceItemID) AS totalItems,
       COALESCE(SUM(ii.Quantity), 0) AS totalQuantity,
-      COALESCE(SUM(ii.Quantity * ii.Price), 0) AS grandTotal
+      COALESCE(SUM(ii.Quantity * ii.Price), 0) AS calculatedItemsTotal
     FROM Invoices inv
     LEFT JOIN Invoice_Items ii ON inv.InvoiceID = ii.InvoiceID
     ${whereSql}
-    GROUP BY inv.InvoiceID, inv.InvoiceDate
+    GROUP BY inv.InvoiceID, inv.InvoiceDate, inv.sub_total, inv.Discount, inv.total_amount, inv.PaymentMethod
     ORDER BY inv.InvoiceID DESC
   `;
 
   const rows = await query(sql, params);
-  return rows.map((r) => ({
-    InvoiceID: r.InvoiceID,
-    InvoiceDate: r.InvoiceDate,
-    totalItems: Number(r.totalItems || 0),
-    totalQuantity: Number(r.totalQuantity || 0),
-    grandTotal: Number(r.grandTotal || 0),
-  }));
+  return rows.map((r) => {
+    const calculatedSubTotal = Number(r.sub_total || 0) > 0 ? Number(r.sub_total) : Number(r.calculatedItemsTotal || 0);
+    const discount = Number(r.Discount || 0);
+    const totalAmount = Number(r.total_amount || 0) > 0 ? Number(r.total_amount) : Math.max(0, calculatedSubTotal - discount);
+
+    return {
+      InvoiceID: r.InvoiceID,
+      InvoiceDate: r.InvoiceDate,
+      sub_total: Number(calculatedSubTotal.toFixed(2)),
+      Discount: Number(discount.toFixed(2)),
+      total_amount: Number(totalAmount.toFixed(2)),
+      PaymentMethod: r.PaymentMethod || 'Cash',
+      totalItems: Number(r.totalItems || 0),
+      totalQuantity: Number(r.totalQuantity || 0),
+      grandTotal: Number(totalAmount.toFixed(2)), // For backward compatibility
+    };
+  });
 }
 
 export async function getInvoiceById(id) {
   const numericId = parseInt(id, 10);
   if (isNaN(numericId)) return null;
 
-  const invSql = `SELECT InvoiceID, InvoiceDate FROM Invoices WHERE InvoiceID = ?`;
+  const invSql = `
+    SELECT 
+      InvoiceID, 
+      InvoiceDate, 
+      CAST(sub_total AS DOUBLE) AS sub_total,
+      CAST(Discount AS DOUBLE) AS Discount,
+      CAST(total_amount AS DOUBLE) AS total_amount,
+      PaymentMethod
+    FROM Invoices 
+    WHERE InvoiceID = ?
+  `;
   const invRows = await query(invSql, [numericId]);
   if (!invRows || invRows.length === 0) {
     return null;
@@ -97,28 +121,39 @@ export async function getInvoiceById(id) {
 
   const totalItems = items.length;
   const totalQuantity = items.reduce((sum, item) => sum + Number(item.Quantity || 0), 0);
-  const grandTotal = items.reduce((sum, item) => sum + Number(item.Total || 0), 0);
+  const itemsSum = items.reduce((sum, item) => sum + Number(item.Total || 0), 0);
+
+  const sub_total = Number(invoice.sub_total || 0) > 0 ? Number(invoice.sub_total) : Number(itemsSum.toFixed(2));
+  const discount = Number(invoice.Discount || 0);
+  const total_amount = Number(invoice.total_amount || 0) > 0 ? Number(invoice.total_amount) : Math.max(0, sub_total - discount);
 
   return {
     InvoiceID: invoice.InvoiceID,
     InvoiceDate: invoice.InvoiceDate,
+    sub_total: Number(sub_total.toFixed(2)),
+    Discount: Number(discount.toFixed(2)),
+    total_amount: Number(total_amount.toFixed(2)),
+    PaymentMethod: invoice.PaymentMethod || 'Cash',
     items,
     summary: {
       totalItems,
       totalQuantity: Number(totalQuantity.toFixed(2)),
-      grandTotal: Number(grandTotal.toFixed(2)),
+      subTotal: Number(sub_total.toFixed(2)),
+      discount: Number(discount.toFixed(2)),
+      totalAmount: Number(total_amount.toFixed(2)),
+      grandTotal: Number(total_amount.toFixed(2)),
     },
   };
 }
 
-export async function createInvoice({ InvoiceDate, items }) {
+export async function createInvoice({ InvoiceDate, Discount = 0, PaymentMethod = 'Cash', items }) {
   if (!items || !Array.isArray(items) || items.length === 0) {
     const err = new Error('Invoice must contain at least one item');
     err.statusCode = 400;
     throw err;
   }
 
-  // Deduplicate and consolidate items if duplicate ItemIDs passed
+  // Consolidate duplicate ItemIDs
   const consolidated = [];
   const map = new Map();
   for (const itm of items) {
@@ -132,6 +167,33 @@ export async function createInvoice({ InvoiceDate, items }) {
       consolidated.push(copy);
     }
   }
+
+  // Compute Subtotal
+  const subTotal = Number(
+    consolidated.reduce((sum, item) => sum + item.Quantity * item.Price, 0).toFixed(2)
+  );
+
+  // Validate Discount
+  const discountNum = Number(Discount) || 0;
+  if (discountNum < 0) {
+    const err = new Error('Discount cannot be negative.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (discountNum > subTotal) {
+    const err = new Error(
+      `Discount (₹${discountNum.toFixed(2)}) cannot be greater than Subtotal (₹${subTotal.toFixed(2)}).`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Compute Total Amount
+  const totalAmount = Number((subTotal - discountNum).toFixed(2));
+
+  // Validate Payment Method
+  const validMethods = ['Cash', 'UPI', 'Card'];
+  const paymentMethod = validMethods.includes(PaymentMethod) ? PaymentMethod : 'Cash';
 
   const conn = await getConnection();
   try {
@@ -158,10 +220,10 @@ export async function createInvoice({ InvoiceDate, items }) {
 
     const formattedDate = formatDateForMySQL(InvoiceDate);
 
-    // Insert Invoice
+    // Insert Invoice with new columns
     const [invResult] = await conn.execute(
-      'INSERT INTO Invoices (InvoiceDate) VALUES (?)',
-      [formattedDate]
+      'INSERT INTO Invoices (InvoiceDate, sub_total, Discount, total_amount, PaymentMethod) VALUES (?, ?, ?, ?, ?)',
+      [formattedDate, subTotal, discountNum, totalAmount, paymentMethod]
     );
     const invoiceId = invResult.insertId;
 
@@ -179,7 +241,14 @@ export async function createInvoice({ InvoiceDate, items }) {
     }
 
     await conn.commit();
-    return { InvoiceID: invoiceId, message: 'Invoice created successfully' };
+    return {
+      InvoiceID: invoiceId,
+      sub_total: subTotal,
+      Discount: discountNum,
+      total_amount: totalAmount,
+      PaymentMethod: paymentMethod,
+      message: 'Invoice created successfully',
+    };
   } catch (error) {
     await conn.rollback();
     throw error;
@@ -188,7 +257,7 @@ export async function createInvoice({ InvoiceDate, items }) {
   }
 }
 
-export async function updateInvoice(id, { InvoiceDate, items }) {
+export async function updateInvoice(id, { InvoiceDate, Discount = 0, PaymentMethod = 'Cash', items }) {
   const numericId = parseInt(id, 10);
   if (isNaN(numericId)) {
     const err = new Error('Invalid Invoice ID');
@@ -217,6 +286,33 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
     }
   }
 
+  // Compute Subtotal
+  const subTotal = Number(
+    consolidated.reduce((sum, item) => sum + item.Quantity * item.Price, 0).toFixed(2)
+  );
+
+  // Validate Discount
+  const discountNum = Number(Discount) || 0;
+  if (discountNum < 0) {
+    const err = new Error('Discount cannot be negative.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (discountNum > subTotal) {
+    const err = new Error(
+      `Discount (₹${discountNum.toFixed(2)}) cannot be greater than Subtotal (₹${subTotal.toFixed(2)}).`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Compute Total Amount
+  const totalAmount = Number((subTotal - discountNum).toFixed(2));
+
+  // Validate Payment Method
+  const validMethods = ['Cash', 'UPI', 'Card'];
+  const paymentMethod = validMethods.includes(PaymentMethod) ? PaymentMethod : 'Cash';
+
   const conn = await getConnection();
   try {
     await conn.beginTransaction();
@@ -232,14 +328,13 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
       throw err;
     }
 
-    // Update Invoice Date if provided
-    if (InvoiceDate) {
-      const formattedDate = formatDateForMySQL(InvoiceDate);
-      await conn.execute(
-        'UPDATE Invoices SET InvoiceDate = ? WHERE InvoiceID = ?',
-        [formattedDate, numericId]
-      );
-    }
+    const formattedDate = formatDateForMySQL(InvoiceDate);
+
+    // Update Invoice record with new financial columns
+    await conn.execute(
+      'UPDATE Invoices SET InvoiceDate = ?, sub_total = ?, Discount = ?, total_amount = ?, PaymentMethod = ? WHERE InvoiceID = ?',
+      [formattedDate, subTotal, discountNum, totalAmount, paymentMethod, numericId]
+    );
 
     // Lock existing invoice items
     const [oldItems] = await conn.execute(
@@ -252,7 +347,7 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
       oldMap.set(Number(oldItm.ItemID), oldItm);
     }
 
-    // Collect all unique ItemIDs involved (both old and new)
+    // Collect all unique ItemIDs involved
     const allItemIds = new Set([...oldMap.keys(), ...newMap.keys()]);
 
     // Lock all involved inventory items
@@ -274,14 +369,12 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
       const availableStock = Number(invItem.StockQuantity);
 
       if (oldMap.has(newItem.ItemID)) {
-        // Item was previously in the invoice
         const oldItm = oldMap.get(newItem.ItemID);
         const oldQty = Number(oldItm.Quantity);
         const newQty = Number(newItem.Quantity);
         const diff = newQty - oldQty;
 
         if (diff > 0) {
-          // Quantity increased: verify stock and deduct diff
           if (availableStock < diff) {
             throw new Error(
               `Insufficient stock for "${invItem.ItemName}" (ID: ${newItem.ItemID}) to increase quantity by ${diff}. Available: ${availableStock}`
@@ -292,7 +385,6 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
             [diff, newItem.ItemID]
           );
         } else if (diff < 0) {
-          // Quantity decreased: restore diff
           const restoreQty = Math.abs(diff);
           await conn.execute(
             'UPDATE Items SET StockQuantity = StockQuantity + ? WHERE ItemID = ?',
@@ -300,13 +392,11 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
           );
         }
 
-        // Update Invoice_Items row
         await conn.execute(
           'UPDATE Invoice_Items SET Quantity = ?, Price = ?, ItemName = ? WHERE InvoiceItemID = ?',
           [newQty, newItem.Price, newItem.ItemName || invItem.ItemName, oldItm.InvoiceItemID]
         );
       } else {
-        // Brand new item added to invoice: verify stock and deduct
         const reqQty = Number(newItem.Quantity);
         if (availableStock < reqQty) {
           throw new Error(
@@ -328,7 +418,6 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
     // 2. Process items removed from invoice
     for (const [oldItemId, oldItm] of oldMap.entries()) {
       if (!newMap.has(oldItemId)) {
-        // Item removed: restore stock & delete from Invoice_Items
         const restoreQty = Number(oldItm.Quantity);
         await conn.execute(
           'UPDATE Items SET StockQuantity = StockQuantity + ? WHERE ItemID = ?',
@@ -342,7 +431,14 @@ export async function updateInvoice(id, { InvoiceDate, items }) {
     }
 
     await conn.commit();
-    return { InvoiceID: numericId, message: 'Invoice updated successfully' };
+    return {
+      InvoiceID: numericId,
+      sub_total: subTotal,
+      Discount: discountNum,
+      total_amount: totalAmount,
+      PaymentMethod: paymentMethod,
+      message: 'Invoice updated successfully',
+    };
   } catch (error) {
     await conn.rollback();
     throw error;
@@ -373,13 +469,11 @@ export async function deleteInvoice(id) {
       throw err;
     }
 
-    // Retrieve all invoice items with lock
     const [items] = await conn.execute(
       'SELECT InvoiceItemID, ItemID, Quantity FROM Invoice_Items WHERE InvoiceID = ? FOR UPDATE',
       [numericId]
     );
 
-    // Restore stock for all items
     for (const item of items) {
       await conn.execute(
         'UPDATE Items SET StockQuantity = StockQuantity + ? WHERE ItemID = ?',
@@ -387,10 +481,7 @@ export async function deleteInvoice(id) {
       );
     }
 
-    // Delete invoice items
     await conn.execute('DELETE FROM Invoice_Items WHERE InvoiceID = ?', [numericId]);
-
-    // Delete invoice
     await conn.execute('DELETE FROM Invoices WHERE InvoiceID = ?', [numericId]);
 
     await conn.commit();
@@ -468,7 +559,6 @@ export async function createSingleInvoiceItem({ InvoiceID, ItemID, ItemName, Qua
   try {
     await conn.beginTransaction();
 
-    // Verify invoice exists
     const [invRows] = await conn.execute(
       'SELECT InvoiceID FROM Invoices WHERE InvoiceID = ? FOR UPDATE',
       [InvoiceID]
@@ -477,7 +567,6 @@ export async function createSingleInvoiceItem({ InvoiceID, ItemID, ItemName, Qua
       throw new Error(`Invoice with ID ${InvoiceID} not found.`);
     }
 
-    // Lock and verify inventory item
     const [itRows] = await conn.execute(
       'SELECT ItemID, ItemName, StockQuantity FROM Items WHERE ItemID = ? FOR UPDATE',
       [ItemID]
@@ -495,16 +584,29 @@ export async function createSingleInvoiceItem({ InvoiceID, ItemID, ItemName, Qua
       );
     }
 
-    // Deduct stock
     await conn.execute(
       'UPDATE Items SET StockQuantity = StockQuantity - ? WHERE ItemID = ?',
       [reqQty, ItemID]
     );
 
-    // Insert invoice item
     const [insertRes] = await conn.execute(
       'INSERT INTO Invoice_Items (InvoiceID, ItemID, ItemName, Quantity, Price) VALUES (?, ?, ?, ?, ?)',
       [InvoiceID, ItemID, ItemName || invItem.ItemName, reqQty, Price]
+    );
+
+    // Recalculate invoice totals
+    const [itemSums] = await conn.execute(
+      'SELECT COALESCE(SUM(Quantity * Price), 0) AS subTotal FROM Invoice_Items WHERE InvoiceID = ?',
+      [InvoiceID]
+    );
+    const newSubTotal = Number(itemSums[0].subTotal || 0);
+    const [invMeta] = await conn.execute('SELECT Discount FROM Invoices WHERE InvoiceID = ?', [InvoiceID]);
+    const discount = Number(invMeta[0]?.Discount || 0);
+    const totalAmount = Math.max(0, newSubTotal - discount);
+
+    await conn.execute(
+      'UPDATE Invoices SET sub_total = ?, total_amount = ? WHERE InvoiceID = ?',
+      [newSubTotal, totalAmount, InvoiceID]
     );
 
     await conn.commit();
@@ -570,6 +672,21 @@ export async function updateSingleInvoiceItem(invoiceItemId, { Quantity, Price }
       [newQty, newPrice, numericId]
     );
 
+    // Recalculate invoice totals
+    const [itemSums] = await conn.execute(
+      'SELECT COALESCE(SUM(Quantity * Price), 0) AS subTotal FROM Invoice_Items WHERE InvoiceID = ?',
+      [oldItem.InvoiceID]
+    );
+    const newSubTotal = Number(itemSums[0].subTotal || 0);
+    const [invMeta] = await conn.execute('SELECT Discount FROM Invoices WHERE InvoiceID = ?', [oldItem.InvoiceID]);
+    const discount = Number(invMeta[0]?.Discount || 0);
+    const totalAmount = Math.max(0, newSubTotal - discount);
+
+    await conn.execute(
+      'UPDATE Invoices SET sub_total = ?, total_amount = ? WHERE InvoiceID = ?',
+      [newSubTotal, totalAmount, oldItem.InvoiceID]
+    );
+
     await conn.commit();
     return { success: true, message: 'Invoice item updated successfully' };
   } catch (error) {
@@ -587,7 +704,7 @@ export async function deleteSingleInvoiceItem(invoiceItemId) {
     await conn.beginTransaction();
 
     const [iiRows] = await conn.execute(
-      'SELECT InvoiceItemID, ItemID, Quantity FROM Invoice_Items WHERE InvoiceItemID = ? FOR UPDATE',
+      'SELECT InvoiceItemID, InvoiceID, ItemID, Quantity FROM Invoice_Items WHERE InvoiceItemID = ? FOR UPDATE',
       [numericId]
     );
     if (iiRows.length === 0) {
@@ -595,14 +712,27 @@ export async function deleteSingleInvoiceItem(invoiceItemId) {
     }
     const item = iiRows[0];
 
-    // Restore stock
     await conn.execute(
       'UPDATE Items SET StockQuantity = StockQuantity + ? WHERE ItemID = ?',
       [item.Quantity, item.ItemID]
     );
 
-    // Delete row
     await conn.execute('DELETE FROM Invoice_Items WHERE InvoiceItemID = ?', [numericId]);
+
+    // Recalculate invoice totals
+    const [itemSums] = await conn.execute(
+      'SELECT COALESCE(SUM(Quantity * Price), 0) AS subTotal FROM Invoice_Items WHERE InvoiceID = ?',
+      [item.InvoiceID]
+    );
+    const newSubTotal = Number(itemSums[0].subTotal || 0);
+    const [invMeta] = await conn.execute('SELECT Discount FROM Invoices WHERE InvoiceID = ?', [item.InvoiceID]);
+    const discount = Number(invMeta[0]?.Discount || 0);
+    const totalAmount = Math.max(0, newSubTotal - discount);
+
+    await conn.execute(
+      'UPDATE Invoices SET sub_total = ?, total_amount = ? WHERE InvoiceID = ?',
+      [newSubTotal, totalAmount, item.InvoiceID]
+    );
 
     await conn.commit();
     return { success: true, message: 'Invoice item deleted and stock restored.' };
