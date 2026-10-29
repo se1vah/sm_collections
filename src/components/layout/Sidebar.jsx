@@ -132,7 +132,7 @@ export default function Sidebar() {
             </span>
             <span className="text-[10px] text-slate-500 bg-slate-800 px-2 py-0.5 rounded">v1.0</span>
           </div>
-          <p className="text-[11px] text-slate-500 mt-2 truncate">Database: sm_collections</p>
+          <p className="text-[11px] text-slate-500 mt-2 truncate">Database: MySQL Live Cloud</p>
         </div>
       </aside>
     </>
