@@ -16,11 +16,14 @@ import {
   IndianRupee,
   Percent,
   Camera,
+  Bluetooth,
 } from 'lucide-react';
+import { useBluetoothPrinter } from '@/context/BluetoothPrinterContext';
 import { toast } from 'sonner';
 
 export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
   const isEdit = Boolean(invoice && invoice.InvoiceID);
+  const { printInvoice, isPrinting, isConnected, deviceName } = useBluetoothPrinter();
 
   const getCurrentDateTime = () => {
     const now = new Date();
@@ -517,6 +520,17 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
         <div className="flex items-center gap-2">
           {(savedInvoiceId || isEdit) && (
             <>
+              <Button
+                variant="outline"
+                onClick={() => printInvoice(savedInvoiceData)}
+                loading={isPrinting}
+                className="text-emerald-700 border-emerald-300 hover:bg-emerald-50 gap-1.5"
+                title="Print directly to KPC307 Bluetooth Thermal Printer"
+              >
+                <Bluetooth className="w-4 h-4 text-emerald-600" />
+                Bluetooth Print
+              </Button>
+
               <Button
                 variant="outline"
                 onClick={handleOpenPrintModal}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import {
   Search,
   Calendar,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   X,
   CreditCard,
+  Bluetooth,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -22,11 +24,14 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import InvoiceForm from './InvoiceForm';
 import ThermalReceiptModal from './ThermalReceiptModal';
+import { useBluetoothPrinter } from '@/context/BluetoothPrinterContext';
 import { toast } from 'sonner';
 
 export default function InvoiceTable() {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [printingInvoiceId, setPrintingInvoiceId] = useState(null);
+  const { isConnected, isPrinting, deviceName, printInvoice } = useBluetoothPrinter();
 
   // Filters
   const [searchId, setSearchId] = useState('');
@@ -152,6 +157,28 @@ export default function InvoiceTable() {
     window.open(`/api/invoices/${invoiceId}/pdf`, '_blank');
   };
 
+  const handleDirectBluetoothPrint = async (invoice) => {
+    setPrintingInvoiceId(invoice.InvoiceID);
+    try {
+      let fullInvoice = invoice;
+      if (!invoice.items || invoice.items.length === 0) {
+        const res = await fetch(`/api/invoices/${invoice.InvoiceID}`);
+        const data = await res.json();
+        if (data.success && data.data) {
+          fullInvoice = data.data;
+        } else {
+          toast.error('Failed to load invoice items for printing');
+          return;
+        }
+      }
+      await printInvoice(fullInvoice);
+    } catch (err) {
+      toast.error('Error printing via Bluetooth: ' + err.message);
+    } finally {
+      setPrintingInvoiceId(null);
+    }
+  };
+
   const formatInvoiceDate = (dateVal) => {
     if (!dateVal) return '-';
     const d = new Date(dateVal);
@@ -220,6 +247,23 @@ export default function InvoiceTable() {
 
         {/* Toolbar Actions */}
         <div className="flex items-center gap-2">
+          {/* Bluetooth Printer Status Quick Link */}
+          <Link
+            href="/settings"
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              isConnected
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 shadow-2xs'
+                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+            }`}
+            title={isConnected ? `Connected to ${deviceName}` : 'Click to configure Bluetooth printer in Settings'}
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+            <span className="hidden sm:inline">
+              {isConnected ? `${deviceName || 'KPC307'} Ready` : 'Printer Offline'}
+            </span>
+          </Link>
+
           <Button
             variant="outline"
             size="sm"
@@ -314,13 +358,21 @@ export default function InvoiceTable() {
                       ₹ {Number(inv.total_amount || 0).toFixed(2)}
                     </td>
 
-                    {/* Actions: Thermal Print, Download PDF, Edit, Delete */}
+                    {/* Actions: Direct Bluetooth Print, Thermal Preview, Download PDF, Edit, Delete */}
                     <td className="py-3.5 px-4">
                       <div className="flex items-center justify-center gap-1">
                         <button
+                          onClick={() => handleDirectBluetoothPrint(inv)}
+                          disabled={printingInvoiceId === inv.InvoiceID}
+                          className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="Print directly to KPC307 Bluetooth Thermal Printer"
+                        >
+                          <Bluetooth className={`w-4 h-4 ${printingInvoiceId === inv.InvoiceID ? 'animate-bounce text-emerald-600' : ''}`} />
+                        </button>
+                        <button
                           onClick={() => handleOpenPrint(inv)}
                           className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Print Thermal Receipt"
+                          title="View / Print Thermal Receipt"
                         >
                           <Printer className="w-4 h-4" />
                         </button>

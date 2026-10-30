@@ -3,10 +3,12 @@
 import { useRef } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
-import { Printer, Download, X } from 'lucide-react';
+import { Printer, Download, X, Bluetooth } from 'lucide-react';
+import { useBluetoothPrinter } from '@/context/BluetoothPrinterContext';
 
 export default function ThermalReceiptModal({ isOpen, onClose, invoice }) {
   const receiptRef = useRef(null);
+  const { isConnected, isPrinting, deviceName, printInvoice } = useBluetoothPrinter();
 
   if (!isOpen || !invoice) return null;
 
@@ -261,16 +263,34 @@ export default function ThermalReceiptModal({ isOpen, onClose, invoice }) {
         </div>
 
         {/* Modal Action Buttons */}
-        <div className="flex items-center justify-between gap-3 pt-2">
-          <Button variant="outline" onClick={handleDownloadPdf} className="flex-1 gap-1.5">
-            <Download className="w-4 h-4" />
-            Download PDF
+        <div className="space-y-2.5 pt-2">
+          {/* Bluetooth Direct Thermal Print Button */}
+          <Button
+            onClick={() => printInvoice(invoice)}
+            loading={isPrinting}
+            className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 shadow-sm"
+          >
+            <Bluetooth className="w-4 h-4" />
+            {isConnected
+              ? `Print to ${deviceName || 'Bluetooth Printer'}`
+              : 'Print via Bluetooth Printer'}
           </Button>
 
-          <Button onClick={handlePrint} className="flex-1 gap-1.5 bg-blue-600 hover:bg-blue-700">
-            <Printer className="w-4 h-4" />
-            Print Receipt
-          </Button>
+          <div className="flex items-center justify-between gap-3">
+            <Button variant="outline" onClick={handleDownloadPdf} className="flex-1 gap-1.5 text-xs">
+              <Download className="w-3.5 h-3.5" />
+              Download PDF
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={handlePrint}
+              className="flex-1 gap-1.5 text-xs text-slate-700 hover:bg-slate-50"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              Browser Print
+            </Button>
+          </div>
         </div>
       </div>
     </Dialog>

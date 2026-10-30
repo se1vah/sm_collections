@@ -12,11 +12,15 @@ import {
   CircleCheck,
   Receipt,
   Store,
+  Settings,
+  Printer,
 } from 'lucide-react';
+import { useBluetoothPrinter } from '@/context/BluetoothPrinterContext';
 
 export default function Sidebar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
+  const { isConnected, deviceName } = useBluetoothPrinter();
 
   const navigation = [
     {
@@ -30,6 +34,12 @@ export default function Sidebar() {
       href: '/inventory',
       icon: Boxes,
       description: 'Stock & Items',
+    },
+    {
+      name: 'Settings',
+      href: '/settings',
+      icon: Settings,
+      description: 'Thermal Printer & Setup',
     },
   ];
 
@@ -46,13 +56,27 @@ export default function Sidebar() {
             <p className="text-[10px] text-slate-500">Invoice & Inventory</p>
           </div>
         </div>
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="p-2 text-slate-600 hover:text-blue-600 rounded-lg hover:bg-slate-100 transition-colors"
-          aria-label="Toggle Navigation"
-        >
-          {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Mobile Printer Status Indicator */}
+          <Link
+            href="/settings"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold border ${
+              isConnected
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                : 'bg-slate-100 border-slate-200 text-slate-600'
+            }`}
+          >
+            <Printer className="w-3 h-3" />
+            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+          </Link>
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="p-2 text-slate-600 hover:text-blue-600 rounded-lg hover:bg-slate-100 transition-colors"
+            aria-label="Toggle Navigation"
+          >
+            {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Backdrop */}
@@ -123,8 +147,9 @@ export default function Sidebar() {
           })}
         </div>
 
-        {/* Database & System Info Footer */}
-        <div className="p-4 border-t border-slate-800/80 bg-slate-950/40">
+        {/* Database & Printer Info Footer */}
+        <div className="p-4 border-t border-slate-800/80 bg-slate-950/40 space-y-2">
+          {/* Database status */}
           <div className="flex items-center justify-between text-xs text-slate-400">
             <span className="flex items-center gap-1.5 font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -132,10 +157,28 @@ export default function Sidebar() {
             </span>
             <span className="text-[10px] text-slate-500 bg-slate-800 px-2 py-0.5 rounded">v1.0</span>
           </div>
-          <p className="text-[11px] text-slate-500 mt-2 truncate">Database: MySQL Live Cloud</p>
+
+          {/* Bluetooth Thermal Printer status */}
+          <div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-800/60">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'
+                }`}
+              />
+              <span className="text-slate-400 truncate text-[11px]">
+                {isConnected ? `${deviceName || 'KPC307'}` : 'Printer Offline'}
+              </span>
+            </div>
+            <Link
+              href="/settings"
+              className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold shrink-0 ml-1.5"
+            >
+              {isConnected ? 'Manage' : 'Connect'}
+            </Link>
+          </div>
         </div>
       </aside>
     </>
   );
 }
-
