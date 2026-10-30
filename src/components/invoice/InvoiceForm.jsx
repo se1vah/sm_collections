@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import InvoiceItemsTable from './InvoiceItemsTable';
 import ThermalReceiptModal from './ThermalReceiptModal';
+import BarcodeScannerModal from '@/components/ui/BarcodeScannerModal';
 import {
   Download,
   Save,
@@ -14,6 +15,7 @@ import {
   CreditCard,
   IndianRupee,
   Percent,
+  Camera,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,6 +41,7 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
 
   // Print thermal modal state
   const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const itemIdInputRef = useRef(null);
 
@@ -88,9 +91,9 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
   const totalAmount = Math.max(0, subTotal - discountNum);
 
   // Search and add item using Item ID
-  const handleAddItemById = async (e) => {
-    if (e) e.preventDefault();
-    const rawId = itemIdInput.trim();
+  const handleAddItemById = async (e, directId = null) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const rawId = (directId !== null && directId !== undefined ? String(directId) : itemIdInput).trim();
     if (!rawId || isNaN(Number(rawId))) {
       toast.error('Please enter a valid numeric Item ID');
       return;
@@ -162,6 +165,16 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
     } finally {
       setSearchingItem(false);
     }
+  };
+
+  const handleBarcodeScan = async (scannedCode) => {
+    if (!scannedCode) return;
+    const cleanCode = String(scannedCode).trim();
+    // Populate Item ID text input field
+    setItemIdInput(cleanCode);
+    toast.success(`Scanned Item #${cleanCode}`);
+    // Automatically trigger Add Item button functionality
+    await handleAddItemById(null, cleanCode);
   };
 
   const handleUpdateQuantity = (itemId, newQuantity) => {
@@ -381,7 +394,7 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
           </span>
         </div>
 
-        <form onSubmit={handleAddItemById} className="flex gap-2">
+        <form onSubmit={handleAddItemById} className="flex gap-2 items-center">
           <div className="relative flex-1">
             <input
               ref={itemIdInputRef}
@@ -392,7 +405,17 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
               className="w-full px-3.5 py-2 text-sm bg-white border border-blue-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-200 focus:border-blue-600 shadow-2xs font-mono"
             />
           </div>
-          <Button type="submit" loading={searchingItem} size="md">
+          <button
+            type="button"
+            onClick={() => setScannerOpen(true)}
+            title="Scan barcode with camera"
+            aria-label="Scan barcode with camera"
+            className="shrink-0 h-[38px] px-3 bg-white hover:bg-blue-100/70 text-blue-700 hover:text-blue-900 rounded-xl border border-blue-300 flex items-center gap-1.5 text-xs font-semibold transition-all shadow-2xs hover:border-blue-400 cursor-pointer"
+          >
+            <Camera className="w-4 h-4 text-blue-600" />
+            <span className="hidden sm:inline">Scan Barcode</span>
+          </button>
+          <Button type="submit" loading={searchingItem} size="md" className="shrink-0 h-[38px]">
             <CornerDownLeft className="w-4 h-4" />
             Add Item
           </Button>
@@ -536,6 +559,15 @@ export default function InvoiceForm({ invoice, onSuccess, onCancel }) {
         isOpen={printModalOpen}
         onClose={() => setPrintModalOpen(false)}
         invoice={savedInvoiceData}
+      />
+
+      {/* Barcode Scanner Modal */}
+      <BarcodeScannerModal
+        isOpen={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScan={handleBarcodeScan}
+        title="Scan Item Barcode"
+        description="Position product barcode or QR code in front of camera to add to invoice"
       />
     </div>
   );

@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import BarcodeScannerModal from '@/components/ui/BarcodeScannerModal';
 import { toast } from 'sonner';
-import { Sparkles, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Sparkles, AlertCircle, CheckCircle2, Camera } from 'lucide-react';
 
 export default function ItemForm({ item, onSuccess, onCancel }) {
   const isEdit = Boolean(item && item.ItemID);
@@ -23,6 +24,7 @@ export default function ItemForm({ item, onSuccess, onCancel }) {
   const [loading, setLoading] = useState(false);
   const [checkingId, setCheckingId] = useState(false);
   const [idStatus, setIdStatus] = useState(null); // { available: boolean, message: string }
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const checkTimerRef = useRef(null);
 
@@ -92,6 +94,13 @@ export default function ItemForm({ item, onSuccess, onCancel }) {
         setCheckingId(false);
       }
     }, 350);
+  };
+
+  const handleBarcodeScan = (scannedCode) => {
+    if (!scannedCode) return;
+    const cleanCode = String(scannedCode).trim();
+    handleItemIdChange(cleanCode);
+    toast.success(`Scanned barcode: ${cleanCode}`);
   };
 
   const validate = () => {
@@ -169,22 +178,52 @@ export default function ItemForm({ item, onSuccess, onCancel }) {
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Item ID */}
-        <div>
-          <Input
-            label="Item ID"
-            required
-            type="number"
-            placeholder="e.g. 101, 102..."
-            disabled={isEdit}
-            value={formData.ItemID}
-            onChange={(e) => handleItemIdChange(e.target.value)}
-            error={errors.ItemID}
-            helperText={isEdit ? 'Item ID cannot be altered' : 'Enter unique ID, SKU, or barcode'}
-          />
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+            Item ID <span className="text-red-500">*</span>
+          </label>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                type="number"
+                placeholder="e.g. 101, 102..."
+                disabled={isEdit}
+                value={formData.ItemID}
+                onChange={(e) => handleItemIdChange(e.target.value)}
+                className={`w-full px-3.5 py-2 text-sm bg-white border rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 transition-all shadow-2xs ${
+                  errors.ItemID
+                    ? 'border-red-400 focus:border-red-500 focus:ring-red-200'
+                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-100'
+                } ${isEdit ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
+              />
+            </div>
+            {!isEdit && (
+              <button
+                type="button"
+                onClick={() => setScannerOpen(true)}
+                title="Scan barcode with camera"
+                aria-label="Scan barcode with camera"
+                className="shrink-0 h-[38px] px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-800 rounded-xl border border-blue-200 flex items-center gap-1.5 text-xs font-semibold transition-all shadow-2xs hover:border-blue-300 cursor-pointer"
+              >
+                <Camera className="w-4 h-4 text-blue-600" />
+                <span className="hidden sm:inline">Scan</span>
+              </button>
+            )}
+          </div>
+
+          {errors.ItemID && (
+            <span className="text-xs text-red-600 font-medium">{errors.ItemID}</span>
+          )}
+
+          {!errors.ItemID && (
+            <span className="text-xs text-slate-500">
+              {isEdit ? 'Item ID cannot be altered' : 'Enter unique ID, SKU, or barcode'}
+            </span>
+          )}
 
           {!isEdit && idStatus && (
             <div
-              className={`text-xs mt-1.5 flex items-center gap-1.5 font-medium ${
+              className={`text-xs mt-1 flex items-center gap-1.5 font-medium ${
                 idStatus.available ? 'text-emerald-600' : 'text-red-600'
               }`}
             >
@@ -203,7 +242,7 @@ export default function ItemForm({ item, onSuccess, onCancel }) {
           )}
 
           {!isEdit && checkingId && (
-            <span className="text-[11px] text-slate-400 mt-1 block">Checking ID availability...</span>
+            <span className="text-[11px] text-slate-400 mt-0.5 block">Checking ID availability...</span>
           )}
         </div>
 
@@ -294,6 +333,15 @@ export default function ItemForm({ item, onSuccess, onCancel }) {
           {isEdit ? 'Update Item' : 'Save Item'}
         </Button>
       </div>
+
+      {/* Barcode Scanner Modal */}
+      <BarcodeScannerModal
+        isOpen={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScan={handleBarcodeScan}
+        title="Scan Item Barcode"
+        description="Position product barcode in front of the camera"
+      />
     </form>
   );
 }
